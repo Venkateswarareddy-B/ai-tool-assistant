@@ -1,10 +1,11 @@
+
 import React, { useState } from "react";
 
 import Sidebar from "./components/Sidebar";
 import ChatMessage from "./components/ChatMessage";
 import ToolCard from "./components/ToolCard";
 
-const API_URL = "http://127.0.0.1:8000";
+const API_URL = import.meta.env.VITE_API_URL;
 
 const toolExamples = {
   Weather: "What is the weather in Hyderabad?",
@@ -16,36 +17,12 @@ const toolExamples = {
 };
 
 const toolData = [
-  {
-    name: "Weather",
-    icon: "🌦️",
-    description: "Get current weather",
-  },
-  {
-    name: "Currency",
-    icon: "💱",
-    description: "Convert currencies",
-  },
-  {
-    name: "Wikipedia",
-    icon: "📚",
-    description: "Search knowledge",
-  },
-  {
-    name: "Calculator",
-    icon: "🧮",
-    description: "Calculate anything",
-  },
-  {
-    name: "News",
-    icon: "📰",
-    description: "Get recent news",
-  },
-  {
-    name: "Location",
-    icon: "📍",
-    description: "Find coordinates",
-  },
+  { name: "Weather", icon: "🌦️", description: "Get current weather" },
+  { name: "Currency", icon: "💱", description: "Convert currencies" },
+  { name: "Wikipedia", icon: "📚", description: "Search knowledge" },
+  { name: "Calculator", icon: "🧮", description: "Calculate anything" },
+  { name: "News", icon: "📰", description: "Get recent news" },
+  { name: "Location", icon: "📍", description: "Find coordinates" },
 ];
 
 function App() {
@@ -61,60 +38,59 @@ function App() {
   const [loading, setLoading] = useState(false);
 
   const sendMessage = async (customMessage = null) => {
-    const messageToSend = customMessage || input.trim();
+    const messageToSend = (customMessage ?? input).trim();
 
-    if (!messageToSend || loading) {
-      return;
-    }
+    if (!messageToSend || loading) return;
 
-    const userMessage = {
-      role: "user",
-      content: messageToSend,
-    };
+    setMessages((previous) => [
+      ...previous,
+      { role: "user", content: messageToSend },
+    ]);
 
-    setMessages((previous) => [...previous, userMessage]);
     setInput("");
     setLoading(true);
 
     try {
-      const response = await fetch(`${API_URL}/api/chat`, {
-        method: "POST",
+      if (!API_URL) {
+        throw new Error("VITE_API_URL is not configured");
+      }
 
-        headers: {
-          "Content-Type": "application/json",
-        },
-
-        body: JSON.stringify({
-          message: messageToSend,
-        }),
-      });
+      const response = await fetch(
+        `${API_URL.replace(/\/+$/, "")}/api/chat`,
+        {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify({
+            message: messageToSend,
+          }),
+        }
+      );
 
       if (!response.ok) {
-        throw new Error("Backend request failed");
+        throw new Error(`Backend request failed: ${response.status}`);
       }
 
       const data = await response.json();
 
-      const assistantMessage = {
-        role: "assistant",
-        content:
-          data.answer || "I couldn't generate a response.",
-        tools_used: data.tools_used || [],
-      };
-
       setMessages((previous) => [
         ...previous,
-        assistantMessage,
+        {
+          role: "assistant",
+          content: data.answer || "I couldn't generate a response.",
+          tools_used: data.tools_used || [],
+        },
       ]);
     } catch (error) {
-      console.error(error);
+      console.error("Chat API error:", error);
 
       setMessages((previous) => [
         ...previous,
         {
           role: "assistant",
           content:
-            "❌ I couldn't connect to the backend. Make sure FastAPI and Ollama are running.",
+            "❌ I couldn't connect to the backend. Check your API URL, FastAPI server, CORS settings and AI model service.",
         },
       ]);
     } finally {
@@ -124,13 +100,11 @@ function App() {
 
   const handleToolClick = (toolName) => {
     const example = toolExamples[toolName];
-
-    setInput(example);
+    if (example) setInput(example);
   };
 
   const handleSubmit = (event) => {
     event.preventDefault();
-
     sendMessage();
   };
 
@@ -139,16 +113,10 @@ function App() {
       <Sidebar onToolClick={handleToolClick} />
 
       <main className="chat-area">
-
-        {/* HEADER */}
-
         <header className="chat-header">
           <div>
             <h2>AI Tool Assistant</h2>
-
-            <p>
-              Ask questions and let AI choose the right tool
-            </p>
+            <p>Ask questions and let AI choose the right tool</p>
           </div>
 
           <div className="connection-status">
@@ -157,27 +125,17 @@ function App() {
           </div>
         </header>
 
-        {/* MESSAGES */}
-
         <section className="messages">
           {messages.map((message, index) => (
-            <ChatMessage
-              key={index}
-              message={message}
-            />
+            <ChatMessage key={index} message={message} />
           ))}
 
           {loading && (
             <div className="message-row assistant-row">
-              <div className="avatar bot-avatar">
-                🤖
-              </div>
+              <div className="avatar bot-avatar">🤖</div>
 
               <div className="message-content">
-                <div className="message-name">
-                  AI Assistant
-                </div>
-
+                <div className="message-name">AI Assistant</div>
                 <div className="message-bubble typing">
                   <span></span>
                   <span></span>
@@ -187,8 +145,6 @@ function App() {
             </div>
           )}
         </section>
-
-        {/* TOOL CARDS */}
 
         {messages.length === 1 && (
           <section className="tools-section">
@@ -201,26 +157,19 @@ function App() {
                   name={tool.name}
                   icon={tool.icon}
                   description={tool.description}
-                  onClick={() =>
-                    handleToolClick(tool.name)
-                  }
+                  onClick={() => handleToolClick(tool.name)}
                 />
               ))}
             </div>
           </section>
         )}
 
-        {/* INPUT */}
-
         <div className="input-container">
           <form onSubmit={handleSubmit} className="chat-form">
-
             <input
               type="text"
               value={input}
-              onChange={(event) =>
-                setInput(event.target.value)
-              }
+              onChange={(event) => setInput(event.target.value)}
               placeholder="Ask me anything..."
               disabled={loading}
             />
@@ -231,14 +180,12 @@ function App() {
             >
               {loading ? "..." : "➤"}
             </button>
-
           </form>
 
           <p className="input-hint">
             AI may use external tools to answer your question.
           </p>
         </div>
-
       </main>
     </div>
   );
