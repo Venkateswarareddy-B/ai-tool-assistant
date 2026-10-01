@@ -5,9 +5,7 @@ import Sidebar from "./components/Sidebar";
 import ChatMessage from "./components/ChatMessage";
 import ToolCard from "./components/ToolCard";
 
-const API_URL =
-  import.meta.env.VITE_API_URL?.replace(/\/+$/, "") ||
-  (import.meta.env.DEV ? "http://127.0.0.1:8000" : "");
+const API_URL = (import.meta.env.VITE_API_URL ?? "").trim().replace(/\/+$/, "");
 
 const toolExamples = {
   Weather: "What is the weather in Hyderabad?",
@@ -53,7 +51,7 @@ function App() {
     setLoading(true);
 
     try {
-      if (!API_URL) {
+      if (import.meta.env.PROD && !API_URL) {
         throw new Error("VITE_API_URL is not configured");
       }
 
