@@ -1,13 +1,14 @@
+import logging
 import os
 from decimal import Decimal, InvalidOperation, ROUND_HALF_UP
 import requests
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-from langchain_core.messages import HumanMessage, ToolMessage
+from langchain_core.messages import HumanMessage, SystemMessage, ToolMessage
 from langchain_core.tools import tool
 from langchain_groq import ChatGroq
 
@@ -21,6 +22,19 @@ load_dotenv()
 OPENWEATHER_API_KEY = os.getenv("OPENWEATHER_API_KEY")
 NEWS_API_KEY = os.getenv("NEWS_API_KEY")
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
+
+logger = logging.getLogger(__name__)
+
+configured_origins = [
+    origin.strip().rstrip("/")
+    for origin in os.getenv("FRONTEND_ORIGINS", "").split(",")
+    if origin.strip()
+]
+allowed_origins = configured_origins or [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
 
 
 # --------------------------------------------------
@@ -32,7 +46,7 @@ app = FastAPI(title="AI Tool Assistant")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -205,21 +219,40 @@ def calculator(expression: str) -> str:
 def get_news(topic: str) -> str:
     """Get recent news about a topic."""
 
+    if not NEWS_API_KEY:
+        return "News search is not configured. Set NEWS_API_KEY in the backend environment."
+
     url = "https://newsapi.org/v2/everything"
 
     params = {
         "q": topic,
-        "apiKey": NEWS_API_KEY,
         "language": "en",
         "pageSize": 5,
         "sortBy": "publishedAt",
     }
 
+    headers = {
+        "X-Api-Key": NEWS_API_KEY,
+    }
+
     response = requests.get(
         url,
         params=params,
+        headers=headers,
         timeout=10,
     )
+
+    if response.status_code == 401:
+        return (
+            "NewsAPI rejected NEWS_API_KEY. Create or activate a valid key, "
+            "update the backend environment, and restart the backend."
+        )
+
+    if response.status_code == 429:
+        return "NewsAPI rate limit or request quota reached. Try again later or check your plan."
+
+    if response.status_code == 403:
+        return "NewsAPI denied this request. Check your account plan and endpoint access."
 
     response.raise_for_status()
 
@@ -324,13 +357,14 @@ tool_map = {
 # GROQ LLM
 # --------------------------------------------------
 
-llm = ChatGroq(
-    model="openai/gpt-oss-120b",
-    temperature=0,
-    api_key=GROQ_API_KEY,
-)
-
-llm_with_tools = llm.bind_tools(tools)
+llm_with_tools = None
+if GROQ_API_KEY:
+    llm = ChatGroq(
+        model=GROQ_MODEL,
+        temperature=0,
+        api_key=GROQ_API_KEY,
+    )
+    llm_with_tools = llm.bind_tools(tools)
 
 
 # --------------------------------------------------
@@ -348,6 +382,28 @@ class ChatRequest(BaseModel):
 @app.post("/api/chat")
 def chat(request: ChatRequest):
 
+    if not request.message.strip():
+        raise HTTPException(
+            status_code=400,
+            detail="Message cannot be empty.",
+        )
+
+    if llm_with_tools is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Groq is not configured. Set GROQ_API_KEY in the backend environment.",
+        )
+
+    def invoke_groq(messages):
+        try:
+            return llm_with_tools.invoke(messages)
+        except Exception as error:
+            logger.exception("Groq request failed")
+            raise HTTPException(
+                status_code=502,
+                detail="Groq request failed. Check GROQ_API_KEY and GROQ_MODEL in the backend environment.",
+            ) from error
+
     messages = [
         HumanMessage(
             content=request.message
@@ -355,7 +411,7 @@ def chat(request: ChatRequest):
     ]
 
     # Ask Groq whether a tool is required
-    response = llm_with_tools.invoke(
+    response = invoke_groq(
         messages
     )
 
@@ -418,11 +474,42 @@ def chat(request: ChatRequest):
         # ASK GROQ FOR FINAL ANSWER
         # --------------------------------------------------
 
-        final_response = (
-            llm_with_tools.invoke(messages)
-        )
+        try:
+            summary_messages = [
+                SystemMessage(
+                    content=(
+                        "Summarize the tool results using only facts explicitly "
+                        "present in them. Never invent dates, article details, "
+                        "claims, calculations, or additional sources. If results "
+                        "contain only headlines and source names, say so and list "
+                        "only those headlines."
+                    )
+                ),
+                *messages,
+            ]
+            final_response = llm.invoke(summary_messages)
+        except Exception as error:
+            logger.exception("Groq summary request failed")
+            final_response = None
 
-        answer = final_response.content
+        content = final_response.content if final_response is not None else ""
+        if isinstance(content, list):
+            answer = "\n".join(
+                part["text"]
+                for part in content
+                if isinstance(part, dict)
+                and isinstance(part.get("text"), str)
+            ).strip()
+        elif isinstance(content, str):
+            answer = content.strip()
+        else:
+            answer = str(content or "").strip()
+
+        if not answer:
+            answer = (
+                "The tool finished, but the AI did not return a summary. "
+                "See the tool output below."
+            )
 
     else:
 
@@ -431,6 +518,15 @@ def chat(request: ChatRequest):
     return {
         "answer": answer,
         "tools_used": used_tools,
+    }
+
+
+@app.get("/health")
+def health():
+    return {
+        "status": "ok",
+        "groq_configured": bool(GROQ_API_KEY),
+        "groq_model": GROQ_MODEL if GROQ_API_KEY else None,
     }
 
 

@@ -5,7 +5,9 @@ import Sidebar from "./components/Sidebar";
 import ChatMessage from "./components/ChatMessage";
 import ToolCard from "./components/ToolCard";
 
-const API_URL = import.meta.env.VITE_API_URL;
+const API_URL =
+  import.meta.env.VITE_API_URL?.replace(/\/+$/, "") ||
+  (import.meta.env.DEV ? "http://127.0.0.1:8000" : "");
 
 const toolExamples = {
   Weather: "What is the weather in Hyderabad?",
@@ -56,7 +58,7 @@ function App() {
       }
 
       const response = await fetch(
-        `${API_URL.replace(/\/+$/, "")}/api/chat`,
+        `${API_URL}/api/chat`,
         {
           method: "POST",
           headers: {
@@ -68,11 +70,13 @@ function App() {
         }
       );
 
-      if (!response.ok) {
-        throw new Error(`Backend request failed: ${response.status}`);
-      }
+      const data = await response.json().catch(() => ({}));
 
-      const data = await response.json();
+      if (!response.ok) {
+        throw new Error(
+          data.detail || `Backend request failed: ${response.status}`
+        );
+      }
 
       setMessages((previous) => [
         ...previous,
@@ -89,8 +93,7 @@ function App() {
         ...previous,
         {
           role: "assistant",
-          content:
-            "❌ I couldn't connect to the backend. Check your API URL, FastAPI server, CORS settings and AI model service.",
+          content: `❌ ${error instanceof Error ? error.message : "The chat request failed."}`,
         },
       ]);
     } finally {
