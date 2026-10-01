@@ -1,2 +1,13 @@
-[tool.vercel]
-entrypoint = "main:app"
+
+[project]
+name = "ai-tool-assistant"
+version = "0.1.0"
+description = "AI Tool Assistant FastAPI backend"
+requires-python = ">=3.12"
+dependencies = [
+    "fastapi",
+    "uvicorn",
+    "httpx",
+    "requests",
+    "python-dotenv"
+]
